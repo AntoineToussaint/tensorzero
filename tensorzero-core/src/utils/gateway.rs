@@ -16,6 +16,7 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tracing::instrument;
 
+use crate::cache::CacheBackend;
 use crate::config::{Config, ConfigFileGlob, snapshot::SnapshotHash, unwritten::UnwrittenConfig};
 use crate::db::clickhouse::ClickHouseConnectionInfo;
 use crate::db::clickhouse::clickhouse_client::ClickHouseClientType;
@@ -143,6 +144,7 @@ pub struct AppStateData {
     pub clickhouse_connection_info: ClickHouseConnectionInfo,
     pub postgres_connection_info: PostgresConnectionInfo,
     pub valkey_connection_info: ValkeyConnectionInfo,
+    pub cache_backend: CacheBackend,
     /// Holds any background tasks that we want to wait on during shutdown
     /// We wait for these tasks to finish when `GatewayHandle` is dropped
     pub deferred_tasks: TaskTracker,
@@ -163,6 +165,21 @@ pub struct AppStateData {
     _private: (),
 }
 pub type AppState = axum::extract::State<AppStateData>;
+
+/// Determines the cache backend to use: Valkey if enabled, otherwise ClickHouse.
+fn make_cache_backend(
+    valkey_connection_info: &ValkeyConnectionInfo,
+    clickhouse_connection_info: &ClickHouseConnectionInfo,
+) -> CacheBackend {
+    match valkey_connection_info {
+        ValkeyConnectionInfo::Enabled { .. } => {
+            CacheBackend::Valkey(valkey_connection_info.clone())
+        }
+        ValkeyConnectionInfo::Disabled => {
+            CacheBackend::ClickHouse(clickhouse_connection_info.clone())
+        }
+    }
+}
 
 /// Creates an auth cache based on the configuration.
 /// Returns None if auth is disabled or cache is disabled.
@@ -256,6 +273,8 @@ impl GatewayHandle {
             )
             .unwrap(),
         );
+        let cache_backend =
+            make_cache_backend(&ValkeyConnectionInfo::Disabled, &clickhouse_connection_info);
         Self {
             app_state: AppStateData {
                 config,
@@ -263,6 +282,7 @@ impl GatewayHandle {
                 clickhouse_connection_info,
                 postgres_connection_info,
                 valkey_connection_info: ValkeyConnectionInfo::Disabled,
+                cache_backend,
                 deferred_tasks: TaskTracker::new(),
                 auth_cache,
                 config_snapshot_cache: None,
@@ -335,6 +355,8 @@ impl GatewayHandle {
         )
         .await?;
 
+        let cache_backend =
+            make_cache_backend(&valkey_connection_info, &clickhouse_connection_info);
         Ok(Self {
             app_state: AppStateData {
                 config,
@@ -342,6 +364,7 @@ impl GatewayHandle {
                 clickhouse_connection_info,
                 postgres_connection_info,
                 valkey_connection_info,
+                cache_backend,
                 deferred_tasks: TaskTracker::new(),
                 auth_cache,
                 config_snapshot_cache,
@@ -375,12 +398,15 @@ impl AppStateData {
             &valkey_connection_info,
             &postgres_connection_info,
         )?);
+        let cache_backend =
+            make_cache_backend(&valkey_connection_info, &clickhouse_connection_info);
         Ok(Self {
             config,
             http_client,
             clickhouse_connection_info,
             postgres_connection_info,
             valkey_connection_info,
+            cache_backend,
             deferred_tasks,
             auth_cache: None,
             config_snapshot_cache: None,
