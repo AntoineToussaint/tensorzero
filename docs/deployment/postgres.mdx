@@ -205,6 +205,40 @@ TENSORZERO_POSTGRES_URL="postgres://myuser:mypass@localhost:5432/tensorzero"
 
 </Step>
 
+<Step title="Enable TensorZero optimizers (optional)">
+
+Some TensorZero optimizers (e.g. [DICL](/optimization/dicl)) store data in Postgres and require the [`pgvector`](https://github.com/pgvector/pgvector) extension.
+
+If you plan to use these optimizers, you must install `pgvector` in your Postgres instance.
+Most managed Postgres providers include `pgvector` out of the box.
+For self-hosted Postgres, follow the [pgvector installation instructions](https://github.com/pgvector/pgvector#installation).
+
+When applying migrations (next step), pass the `--enable-optimizer-postgres-migrations` flag to apply the additional optimizer schema:
+
+<Tabs>
+
+<Tab title="Docker Compose">
+
+```bash
+docker compose run --rm gateway --run-postgres-migrations --enable-optimizer-postgres-migrations
+```
+
+</Tab>
+
+<Tab title="Docker">
+
+```bash
+docker run --rm --network host \
+    -e TENSORZERO_POSTGRES_URL \
+    tensorzero/gateway --run-postgres-migrations --enable-optimizer-postgres-migrations
+```
+
+</Tab>
+
+</Tabs>
+
+</Step>
+
 <Step title="Apply Postgres migrations">
 
 <Warning>
