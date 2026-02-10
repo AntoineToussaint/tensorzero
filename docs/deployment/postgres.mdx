@@ -192,6 +192,17 @@ See the [PlanetScale documentation](https://planetscale.com/docs/postgres/extens
 
 </Step>
 
+<Step title="Enable pg_trgm">
+
+TensorZero requires the [`pg_trgm`](https://www.postgresql.org/docs/current/pgtrgm.html) extension for substring search on inference inputs and outputs.
+
+Unlike `pg_cron`, `pg_trgm` is a core Postgres contrib module that is available by default on most Postgres installations and managed services.
+TensorZero's migrations will automatically run `CREATE EXTENSION IF NOT EXISTS pg_trgm`, so no manual setup is needed in most cases.
+
+If your Postgres provider requires you to pre-enable extensions (e.g. through a dashboard or parameter group), make sure `pg_trgm` is enabled before running migrations.
+
+</Step>
+
 <Step title="Configure TensorZero">
 
 To configure TensorZero to use Postgres, set the `TENSORZERO_POSTGRES_URL` environment variable with your Postgres connection details.
