@@ -30,6 +30,7 @@ import {
   Breadcrumbs,
 } from "~/components/layout/PageLayout";
 import { FunctionTypeBadge } from "~/components/function/FunctionSelector";
+import { HelpTooltip } from "~/components/ui/HelpTooltip";
 import { DEFAULT_FUNCTION } from "~/utils/constants";
 import type { FunctionConfig, TimeWindow } from "~/types/tensorzero";
 import { getTensorZeroClient } from "~/utils/tensorzero.server";
@@ -86,7 +87,15 @@ function SectionsSkeleton() {
   return (
     <>
       <SectionLayout>
-        <SectionHeader heading="Experimentation" />
+        <SectionHeader
+          heading="Experimentation"
+          help={
+            <HelpTooltip docsPath="experimentation/run-static-ab-tests">
+              How traffic is distributed across variants. Weights represent the
+              probability each variant is selected for an inference.
+            </HelpTooltip>
+          }
+        />
         <Skeleton className="h-32 w-full" />
       </SectionLayout>
 
@@ -379,7 +388,15 @@ function SectionsContent({
     <>
       {functionName !== DEFAULT_FUNCTION && (
         <SectionLayout>
-          <SectionHeader heading="Experimentation" />
+          <SectionHeader
+            heading="Experimentation"
+            help={
+              <HelpTooltip docsPath="experimentation/run-static-ab-tests">
+                How traffic is distributed across variants. Weights represent
+                the probability each variant is selected for an inference.
+              </HelpTooltip>
+            }
+          />
           <FunctionExperimentation
             functionConfig={functionConfig}
             functionName={functionName}
