@@ -26,7 +26,6 @@ use crate::db::inferences::{
     VariantThroughput,
 };
 use crate::db::postgres::inference_filter_helpers::{MetricJoinRegistry, apply_inference_filter};
-use crate::db::query_helpers::json_double_escape_string_without_quotes;
 use crate::db::query_helpers::uuid_to_datetime;
 use crate::endpoints::inference::InferenceParams;
 use crate::endpoints::stored_inferences::v1::types::{
@@ -709,6 +708,22 @@ pub(super) fn build_insert_json_inference_io_query(
     Ok(query_builder)
 }
 
+/// Pushes a full-text search WHERE filter using generated tsvector columns.
+/// `input_tsvector_col` and `output_tsvector_col` are generated column references
+/// (e.g. `"io.input_tsvector"`, `"io.output_tsvector"`).
+fn push_tsvector_search_filter(
+    qb: &mut QueryBuilder<sqlx::Postgres>,
+    search_query: &str,
+    input_tsvector_col: &str,
+    output_tsvector_col: &str,
+) {
+    qb.push(format!(" AND ({input_tsvector_col} @@ plainto_tsquery("));
+    qb.push_bind(search_query.to_string());
+    qb.push(format!(") OR {output_tsvector_col} @@ plainto_tsquery("));
+    qb.push_bind(search_query.to_string());
+    qb.push("))");
+}
+
 // ===== Helper types =====
 
 /// Result of building ORDER BY clause, including any required JOINs.
@@ -968,12 +983,12 @@ fn build_chat_inferences_query(
 
     // Apply search query filter
     if let Some(search_query) = params.search_query_experimental {
-        let search_pattern = format!("%{search_query}%");
-        query_builder.push(" AND (io.input::text ILIKE ");
-        query_builder.push_bind(search_pattern.clone());
-        query_builder.push(" OR io.output::text ILIKE ");
-        query_builder.push_bind(search_pattern);
-        query_builder.push(")");
+        push_tsvector_search_filter(
+            &mut query_builder,
+            search_query,
+            "io.input_tsvector",
+            "io.output_tsvector",
+        );
     }
 
     // Handle pagination cursor
@@ -1109,12 +1124,12 @@ fn build_json_inferences_query(
 
     // Apply search query filter
     if let Some(search_query) = params.search_query_experimental {
-        let search_pattern = format!("%{search_query}%");
-        query_builder.push(" AND (io.input::text ILIKE ");
-        query_builder.push_bind(search_pattern.clone());
-        query_builder.push(" OR io.output::text ILIKE ");
-        query_builder.push_bind(search_pattern);
-        query_builder.push(")");
+        push_tsvector_search_filter(
+            &mut query_builder,
+            search_query,
+            "io.input_tsvector",
+            "io.output_tsvector",
+        );
     }
 
     // Handle pagination cursor
@@ -1523,14 +1538,14 @@ fn apply_union_filters(
     // Apply inference filter (e.g., DemonstrationFeedback, metric filters, etc.)
     apply_inference_filter(query_builder, params.filters, config)?;
 
-    // Apply search query filter (input/output are in IO tables)
+    // Apply search query filter using generated tsvector columns
     if let Some(search_query) = params.search_query_experimental {
-        let search_pattern = format!("%{search_query}%");
-        query_builder.push(" AND (io.input::text ILIKE ");
-        query_builder.push_bind(search_pattern.clone());
-        query_builder.push(" OR io.output::text ILIKE ");
-        query_builder.push_bind(search_pattern);
-        query_builder.push(")");
+        push_tsvector_search_filter(
+            query_builder,
+            search_query,
+            "io.input_tsvector",
+            "io.output_tsvector",
+        );
     }
 
     // Handle pagination cursor
@@ -1654,13 +1669,12 @@ async fn count_single_table_inferences(
 
     // Apply search query filter (input/output are in IO tables)
     if let Some(search_query) = params.search_query_experimental {
-        let json_escaped_text_query = json_double_escape_string_without_quotes(search_query)?;
-        let search_pattern = format!("%{json_escaped_text_query}%");
-        query_builder.push(" AND (io.input::text ILIKE ");
-        query_builder.push_bind(search_pattern.clone());
-        query_builder.push(" OR io.output::text ILIKE ");
-        query_builder.push_bind(search_pattern);
-        query_builder.push(")");
+        push_tsvector_search_filter(
+            &mut query_builder,
+            search_query,
+            "io.input_tsvector",
+            "io.output_tsvector",
+        );
     }
 
     let query = query_builder.build_query_scalar::<i64>();
@@ -1833,15 +1847,14 @@ fn apply_count_filters(
     // Apply inference filter (e.g., DemonstrationFeedback, metric filters, etc.)
     apply_inference_filter(query_builder, params.filters, config)?;
 
-    // Apply search query filter (input/output are in IO tables)
+    // Apply search query filter using generated tsvector columns
     if let Some(search_query) = params.search_query_experimental {
-        let json_escaped_text_query = json_double_escape_string_without_quotes(search_query)?;
-        let search_pattern = format!("%{json_escaped_text_query}%");
-        query_builder.push(" AND (io.input::text ILIKE ");
-        query_builder.push_bind(search_pattern.clone());
-        query_builder.push(" OR io.output::text ILIKE ");
-        query_builder.push_bind(search_pattern);
-        query_builder.push(")");
+        push_tsvector_search_filter(
+            query_builder,
+            search_query,
+            "io.input_tsvector",
+            "io.output_tsvector",
+        );
     }
 
     Ok(())
@@ -2260,7 +2273,7 @@ mod tests {
             FROM tensorzero.chat_inferences i
             JOIN tensorzero.chat_inference_io io ON io.id = i.id AND io.created_at = i.created_at
             WHERE 1=1 AND i.function_name = $1
-            AND (io.input::text ILIKE $2 OR io.output::text ILIKE $3)
+            AND (io.input_tsvector @@ plainto_tsquery($2) OR io.output_tsvector @@ plainto_tsquery($3))
             ORDER BY i.id DESC
             LIMIT $4 OFFSET $5
             ",

@@ -19,7 +19,7 @@ use crate::db::datasets::{
     DEFAULT_ALLOW_STALE_IN_GET_DATAPOINT, DatasetMetadata, DatasetQueries, GetDatapointParams,
     GetDatapointsParams, GetDatasetMetadataParams,
 };
-use crate::db::query_helpers::{json_double_escape_string_without_quotes, uuid_to_datetime};
+use crate::db::query_helpers::uuid_to_datetime;
 use crate::db::stored_datapoint::{
     StoredChatInferenceDatapoint, StoredDatapoint, StoredJsonInferenceDatapoint,
 };
@@ -935,18 +935,12 @@ fn add_common_where_clauses(
     }
 
     if let Some(query) = search_query {
-        // Case-insensitive substring search on input and output
-        let json_escaped_query = json_double_escape_string_without_quotes(query)?;
-        let search_pattern = format!("%{json_escaped_query}%");
-        qb.push(" AND (");
-        qb.push(input_column);
-        qb.push("::TEXT ILIKE ");
-        qb.push_bind(search_pattern.clone());
-        qb.push(" OR ");
-        qb.push(output_column);
-        qb.push("::TEXT ILIKE ");
-        qb.push_bind(search_pattern);
-        qb.push(")");
+        // Full-text search using generated tsvector columns
+        qb.push(format!(" AND ({input_column}_tsvector @@ plainto_tsquery("));
+        qb.push_bind(query.to_string());
+        qb.push(format!(") OR {output_column}_tsvector @@ plainto_tsquery("));
+        qb.push_bind(query.to_string());
+        qb.push("))");
     }
 
     Ok(())
@@ -1483,7 +1477,7 @@ mod tests {
                 FROM tensorzero.chat_datapoints
                 WHERE TRUE
                 AND dataset_name = $1 AND function_name = $2 AND id = ANY($3)
-                AND (input::TEXT ILIKE $4 OR output::TEXT ILIKE $5)
+                AND (input_tsvector @@ plainto_tsquery($4) OR output_tsvector @@ plainto_tsquery($5))
                 ORDER BY updated_at ASC, id DESC LIMIT $6)
                 UNION ALL
                 (SELECT
@@ -1496,7 +1490,7 @@ mod tests {
                 FROM tensorzero.json_datapoints
                 WHERE TRUE
                 AND dataset_name = $7 AND function_name = $8 AND id = ANY($9)
-                AND (input::TEXT ILIKE $10 OR output::TEXT ILIKE $11)
+                AND (input_tsvector @@ plainto_tsquery($10) OR output_tsvector @@ plainto_tsquery($11))
                 ORDER BY updated_at ASC, id DESC LIMIT $12)
             ) AS combined
             ORDER BY updated_at ASC, id DESC LIMIT $13 OFFSET $14
