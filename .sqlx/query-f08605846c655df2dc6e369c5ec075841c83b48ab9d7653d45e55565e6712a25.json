@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT\n                dynamic_tools,\n                dynamic_provider_tools,\n                allowed_tools,\n                tool_choice,\n                parallel_tool_calls\n            FROM tensorzero.chat_inferences\n            WHERE function_name = $1 AND id = $2\n            LIMIT 1\n            ",
+  "query": "\n            SELECT\n                io.dynamic_tools,\n                io.dynamic_provider_tools,\n                io.allowed_tools,\n                i.tool_choice,\n                i.parallel_tool_calls\n            FROM tensorzero.chat_inferences i\n            JOIN tensorzero.chat_inference_io io ON io.id = i.id AND io.created_at = i.created_at\n            WHERE i.function_name = $1 AND i.id = $2\n            LIMIT 1\n            ",
   "describe": {
     "columns": [
       {
@@ -9,7 +9,7 @@
         "type_info": "Jsonb",
         "origin": {
           "Table": {
-            "table": "tensorzero.chat_inferences",
+            "table": "tensorzero.chat_inference_io",
             "name": "dynamic_tools"
           }
         }
@@ -20,7 +20,7 @@
         "type_info": "Jsonb",
         "origin": {
           "Table": {
-            "table": "tensorzero.chat_inferences",
+            "table": "tensorzero.chat_inference_io",
             "name": "dynamic_provider_tools"
           }
         }
@@ -31,7 +31,7 @@
         "type_info": "Jsonb",
         "origin": {
           "Table": {
-            "table": "tensorzero.chat_inferences",
+            "table": "tensorzero.chat_inference_io",
             "name": "allowed_tools"
           }
         }
@@ -73,5 +73,5 @@
       true
     ]
   },
-  "hash": "f4fea76553ddd658b402eeddec40ef822e2bf014311e28a7fd7f5587b6bbf4ef"
+  "hash": "f08605846c655df2dc6e369c5ec075841c83b48ab9d7653d45e55565e6712a25"
 }

@@ -397,11 +397,12 @@ fn build_get_completed_chat_batch_inferences_query(
                     ci.id as inference_id,
                     ci.episode_id as episode_id,
                     ci.variant_name as variant_name,
-                    ci.output::text as output,
+                    cio.output::text as output,
                     SUM(mi.input_tokens)::INTEGER as input_tokens,
                     SUM(mi.output_tokens)::INTEGER as output_tokens,
                     (ARRAY_AGG(mi.finish_reason ORDER BY mi.id DESC))[1] as finish_reason
                 FROM tensorzero.chat_inferences ci
+                JOIN tensorzero.chat_inference_io cio ON cio.id = ci.id AND cio.created_at = ci.created_at
                 LEFT JOIN tensorzero.model_inferences mi ON ci.id = mi.inference_id
                 WHERE ci.id IN (SELECT inference_id FROM batch_inferences)
                 AND ci.function_name = ",
@@ -409,7 +410,7 @@ fn build_get_completed_chat_batch_inferences_query(
             qb.push_bind(function_name.to_string());
             qb.push(" AND ci.variant_name = ");
             qb.push_bind(variant_name.to_string());
-            qb.push(" GROUP BY ci.id, ci.episode_id, ci.variant_name, ci.output");
+            qb.push(" GROUP BY ci.id, ci.episode_id, ci.variant_name, cio.output");
             qb
         }
         Some(inference_id) => {
@@ -423,11 +424,12 @@ fn build_get_completed_chat_batch_inferences_query(
                     ci.id as inference_id,
                     ci.episode_id as episode_id,
                     ci.variant_name as variant_name,
-                    ci.output::text as output,
+                    cio.output::text as output,
                     SUM(mi.input_tokens)::INTEGER as input_tokens,
                     SUM(mi.output_tokens)::INTEGER as output_tokens,
                     (ARRAY_AGG(mi.finish_reason ORDER BY mi.id DESC))[1] as finish_reason
                 FROM tensorzero.chat_inferences ci
+                JOIN tensorzero.chat_inference_io cio ON cio.id = ci.id AND cio.created_at = ci.created_at
                 LEFT JOIN tensorzero.model_inferences mi ON ci.id = mi.inference_id
                 WHERE ci.id = ",
             );
@@ -436,7 +438,7 @@ fn build_get_completed_chat_batch_inferences_query(
             qb.push_bind(function_name.to_string());
             qb.push(" AND ci.variant_name = ");
             qb.push_bind(variant_name.to_string());
-            qb.push(" GROUP BY ci.id, ci.episode_id, ci.variant_name, ci.output");
+            qb.push(" GROUP BY ci.id, ci.episode_id, ci.variant_name, cio.output");
             qb
         }
     }
@@ -471,11 +473,12 @@ fn build_get_completed_json_batch_inferences_query(
                     ji.id as inference_id,
                     ji.episode_id as episode_id,
                     ji.variant_name as variant_name,
-                    ji.output::text as output,
+                    jio.output::text as output,
                     SUM(mi.input_tokens)::INTEGER as input_tokens,
                     SUM(mi.output_tokens)::INTEGER as output_tokens,
                     (ARRAY_AGG(mi.finish_reason ORDER BY mi.id DESC))[1] as finish_reason
                 FROM tensorzero.json_inferences ji
+                JOIN tensorzero.json_inference_io jio ON jio.id = ji.id AND jio.created_at = ji.created_at
                 LEFT JOIN tensorzero.model_inferences mi ON ji.id = mi.inference_id
                 WHERE ji.id IN (SELECT inference_id FROM batch_inferences)
                 AND ji.function_name = ",
@@ -483,7 +486,7 @@ fn build_get_completed_json_batch_inferences_query(
             qb.push_bind(function_name.to_string());
             qb.push(" AND ji.variant_name = ");
             qb.push_bind(variant_name.to_string());
-            qb.push(" GROUP BY ji.id, ji.episode_id, ji.variant_name, ji.output");
+            qb.push(" GROUP BY ji.id, ji.episode_id, ji.variant_name, jio.output");
             qb
         }
         Some(inference_id) => {
@@ -497,11 +500,12 @@ fn build_get_completed_json_batch_inferences_query(
                     ji.id as inference_id,
                     ji.episode_id as episode_id,
                     ji.variant_name as variant_name,
-                    ji.output::text as output,
+                    jio.output::text as output,
                     SUM(mi.input_tokens)::INTEGER as input_tokens,
                     SUM(mi.output_tokens)::INTEGER as output_tokens,
                     (ARRAY_AGG(mi.finish_reason ORDER BY mi.id DESC))[1] as finish_reason
                 FROM tensorzero.json_inferences ji
+                JOIN tensorzero.json_inference_io jio ON jio.id = ji.id AND jio.created_at = ji.created_at
                 LEFT JOIN tensorzero.model_inferences mi ON ji.id = mi.inference_id
                 WHERE ji.id = ",
             );
@@ -510,7 +514,7 @@ fn build_get_completed_json_batch_inferences_query(
             qb.push_bind(function_name.to_string());
             qb.push(" AND ji.variant_name = ");
             qb.push_bind(variant_name.to_string());
-            qb.push(" GROUP BY ji.id, ji.episode_id, ji.variant_name, ji.output");
+            qb.push(" GROUP BY ji.id, ji.episode_id, ji.variant_name, jio.output");
             qb
         }
     }
@@ -718,15 +722,16 @@ mod tests {
                 ci.id as inference_id,
                 ci.episode_id as episode_id,
                 ci.variant_name as variant_name,
-                ci.output::text as output,
+                cio.output::text as output,
                 SUM(mi.input_tokens)::INTEGER as input_tokens,
                 SUM(mi.output_tokens)::INTEGER as output_tokens,
                 (ARRAY_AGG(mi.finish_reason ORDER BY mi.id DESC))[1] as finish_reason
             FROM tensorzero.chat_inferences ci
+            JOIN tensorzero.chat_inference_io cio ON cio.id = ci.id AND cio.created_at = ci.created_at
             LEFT JOIN tensorzero.model_inferences mi ON ci.id = mi.inference_id
             WHERE ci.id IN (SELECT inference_id FROM batch_inferences)
             AND ci.function_name = $2 AND ci.variant_name = $3
-            GROUP BY ci.id, ci.episode_id, ci.variant_name, ci.output
+            GROUP BY ci.id, ci.episode_id, ci.variant_name, cio.output
             ",
         );
     }
@@ -751,14 +756,15 @@ mod tests {
                 ci.id as inference_id,
                 ci.episode_id as episode_id,
                 ci.variant_name as variant_name,
-                ci.output::text as output,
+                cio.output::text as output,
                 SUM(mi.input_tokens)::INTEGER as input_tokens,
                 SUM(mi.output_tokens)::INTEGER as output_tokens,
                 (ARRAY_AGG(mi.finish_reason ORDER BY mi.id DESC))[1] as finish_reason
             FROM tensorzero.chat_inferences ci
+            JOIN tensorzero.chat_inference_io cio ON cio.id = ci.id AND cio.created_at = ci.created_at
             LEFT JOIN tensorzero.model_inferences mi ON ci.id = mi.inference_id
             WHERE ci.id = $1 AND ci.function_name = $2 AND ci.variant_name = $3
-            GROUP BY ci.id, ci.episode_id, ci.variant_name, ci.output
+            GROUP BY ci.id, ci.episode_id, ci.variant_name, cio.output
             ",
         );
     }
@@ -787,15 +793,16 @@ mod tests {
                 ji.id as inference_id,
                 ji.episode_id as episode_id,
                 ji.variant_name as variant_name,
-                ji.output::text as output,
+                jio.output::text as output,
                 SUM(mi.input_tokens)::INTEGER as input_tokens,
                 SUM(mi.output_tokens)::INTEGER as output_tokens,
                 (ARRAY_AGG(mi.finish_reason ORDER BY mi.id DESC))[1] as finish_reason
             FROM tensorzero.json_inferences ji
+            JOIN tensorzero.json_inference_io jio ON jio.id = ji.id AND jio.created_at = ji.created_at
             LEFT JOIN tensorzero.model_inferences mi ON ji.id = mi.inference_id
             WHERE ji.id IN (SELECT inference_id FROM batch_inferences)
             AND ji.function_name = $2 AND ji.variant_name = $3
-            GROUP BY ji.id, ji.episode_id, ji.variant_name, ji.output
+            GROUP BY ji.id, ji.episode_id, ji.variant_name, jio.output
             ",
         );
     }
@@ -820,14 +827,15 @@ mod tests {
                 ji.id as inference_id,
                 ji.episode_id as episode_id,
                 ji.variant_name as variant_name,
-                ji.output::text as output,
+                jio.output::text as output,
                 SUM(mi.input_tokens)::INTEGER as input_tokens,
                 SUM(mi.output_tokens)::INTEGER as output_tokens,
                 (ARRAY_AGG(mi.finish_reason ORDER BY mi.id DESC))[1] as finish_reason
             FROM tensorzero.json_inferences ji
+            JOIN tensorzero.json_inference_io jio ON jio.id = ji.id AND jio.created_at = ji.created_at
             LEFT JOIN tensorzero.model_inferences mi ON ji.id = mi.inference_id
             WHERE ji.id = $1 AND ji.function_name = $2 AND ji.variant_name = $3
-            GROUP BY ji.id, ji.episode_id, ji.variant_name, ji.output
+            GROUP BY ji.id, ji.episode_id, ji.variant_name, jio.output
             ",
         );
     }
