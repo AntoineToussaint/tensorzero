@@ -101,6 +101,7 @@ interface SectionHeaderProps {
   heading: string;
   count?: CountValue;
   badge?: { name: string; tooltip: string };
+  help?: ReactNode;
   children?: ReactNode;
 }
 
@@ -108,11 +109,13 @@ function SectionHeader({
   heading,
   count,
   badge,
+  help,
   children,
 }: SectionHeaderProps) {
   return (
     <h2 className="flex items-center gap-2 text-xl font-medium">
       {heading}
+      {help}
       {count !== undefined && <SectionCount count={count} />}
       {badge && (
         <Tooltip delayDuration={0}>
