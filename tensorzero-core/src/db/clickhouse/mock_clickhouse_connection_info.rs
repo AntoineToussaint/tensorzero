@@ -12,8 +12,9 @@ use crate::db::datasets::{
 use crate::db::inferences::{
     CountByVariant, CountInferencesForFunctionParams, CountInferencesParams,
     CountInferencesWithFeedbackParams, FunctionInferenceCount, FunctionInfo,
-    GetFunctionThroughputByVariantParams, InferenceMetadata, InferenceQueries,
-    ListInferenceMetadataParams, ListInferencesParams, MockInferenceQueries, VariantThroughput,
+    GetFunctionCostByVariantParams, GetFunctionThroughputByVariantParams, InferenceMetadata,
+    InferenceQueries, ListInferenceMetadataParams, ListInferencesParams, MockInferenceQueries,
+    VariantCost, VariantThroughput,
 };
 use crate::db::model_inferences::{MockModelInferenceQueries, ModelInferenceQueries};
 use crate::db::resolve_uuid::{ResolveUuidQueries, ResolvedObject};
@@ -171,6 +172,15 @@ impl InferenceQueries for MockClickHouseConnectionInfo {
     ) -> Result<Vec<FunctionInferenceCount>, Error> {
         self.inference_queries
             .list_functions_with_inference_count()
+            .await
+    }
+
+    async fn get_function_cost_by_variant(
+        &self,
+        params: GetFunctionCostByVariantParams<'_>,
+    ) -> Result<Vec<VariantCost>, Error> {
+        self.inference_queries
+            .get_function_cost_by_variant(params)
             .await
     }
 }
