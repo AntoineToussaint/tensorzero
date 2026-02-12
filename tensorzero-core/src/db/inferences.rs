@@ -427,6 +427,36 @@ pub struct VariantThroughput {
     pub count: u32,
 }
 
+/// Parameters for getting function cost by variant.
+#[derive(Debug)]
+pub struct GetFunctionCostByVariantParams<'a> {
+    pub function_name: &'a str,
+    pub time_window: TimeWindow,
+    pub max_periods: u32,
+}
+
+/// Row returned from the get_function_cost_by_variant query.
+///
+/// Contains the total cost for a (period, variant) combination along with
+/// coverage information so the frontend can determine what fraction of
+/// inferences have cost data.
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
+pub struct VariantCost {
+    /// Start datetime of the period in RFC 3339 format with milliseconds
+    #[serde(serialize_with = "serialize_utc_datetime_rfc_3339_with_millis")]
+    pub period_start: DateTime<Utc>,
+    pub variant_name: String,
+    /// Total cost in dollars for inferences with cost data in this bucket.
+    #[cfg_attr(feature = "ts-bindings", ts(type = "number"))]
+    pub total_cost: crate::cost::Cost,
+    /// Total number of inferences (with and without cost) in this bucket.
+    pub inference_count: u32,
+    /// Number of inferences that have cost data in this bucket.
+    pub inferences_with_cost: u32,
+}
+
 /// Row returned from the list_functions_with_inference_count query.
 #[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
@@ -557,4 +587,12 @@ pub trait InferenceQueries {
     async fn list_functions_with_inference_count(
         &self,
     ) -> Result<Vec<FunctionInferenceCount>, Error>;
+
+    /// Get function cost grouped by variant and time period.
+    /// Returns cost data with coverage information for the last `max_periods` time periods.
+    /// Each row includes total cost, total inference count, and count of inferences with cost data.
+    async fn get_function_cost_by_variant(
+        &self,
+        params: GetFunctionCostByVariantParams<'_>,
+    ) -> Result<Vec<VariantCost>, Error>;
 }

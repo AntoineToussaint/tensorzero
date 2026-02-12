@@ -29,8 +29,9 @@ use crate::db::feedback::{
 use crate::db::inferences::{
     CountByVariant, CountInferencesForFunctionParams, CountInferencesParams,
     CountInferencesWithFeedbackParams, FunctionInferenceCount, FunctionInfo,
-    GetFunctionThroughputByVariantParams, InferenceMetadata, InferenceQueries,
-    ListInferenceMetadataParams, ListInferencesParams, VariantThroughput,
+    GetFunctionCostByVariantParams, GetFunctionThroughputByVariantParams, InferenceMetadata,
+    InferenceQueries, ListInferenceMetadataParams, ListInferencesParams, VariantCost,
+    VariantThroughput,
 };
 use crate::db::model_inferences::ModelInferenceQueries;
 use crate::db::postgres::PostgresConnectionInfo;
@@ -484,6 +485,15 @@ impl InferenceQueries for DelegatingDatabaseConnection {
     ) -> Result<Vec<FunctionInferenceCount>, Error> {
         self.get_read_database()
             .list_functions_with_inference_count()
+            .await
+    }
+
+    async fn get_function_cost_by_variant(
+        &self,
+        params: GetFunctionCostByVariantParams<'_>,
+    ) -> Result<Vec<VariantCost>, Error> {
+        self.get_read_database()
+            .get_function_cost_by_variant(params)
             .await
     }
 }

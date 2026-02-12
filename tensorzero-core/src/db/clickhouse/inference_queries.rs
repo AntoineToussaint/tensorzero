@@ -19,9 +19,9 @@ use crate::db::inferences::{
     ClickHouseStoredInferenceWithDispreferredOutputs, CountByVariant,
     CountInferencesForFunctionParams, CountInferencesParams, CountInferencesWithFeedbackParams,
     DEFAULT_INFERENCE_QUERY_LIMIT, FunctionInferenceCount, FunctionInfo,
-    GetFunctionThroughputByVariantParams, InferenceMetadata, InferenceOutputSource,
-    InferenceQueries, ListInferenceMetadataParams, ListInferencesParams, PaginationParams,
-    VariantThroughput,
+    GetFunctionCostByVariantParams, GetFunctionThroughputByVariantParams, InferenceMetadata,
+    InferenceOutputSource, InferenceQueries, ListInferenceMetadataParams, ListInferencesParams,
+    PaginationParams, VariantCost, VariantThroughput,
 };
 use crate::db::query_helpers::json_double_escape_string_without_quotes;
 use crate::error::{Error, ErrorDetails};
@@ -439,6 +439,34 @@ impl InferenceQueries for ClickHouseConnectionInfo {
                 serde_json::from_str(line).map_err(|e| {
                     Error::new(ErrorDetails::ClickHouseDeserialization {
                         message: format!("Failed to deserialize FunctionInferenceCount: {e}"),
+                    })
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(result)
+    }
+
+    async fn get_function_cost_by_variant(
+        &self,
+        params: GetFunctionCostByVariantParams<'_>,
+    ) -> Result<Vec<VariantCost>, Error> {
+        let (query, params_owned) = build_function_cost_by_variant_query(&params);
+        let query_params: HashMap<&str, &str> = params_owned
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+
+        let response = self.run_query_synchronous(query, &query_params).await?;
+
+        let result: Vec<VariantCost> = response
+            .response
+            .lines()
+            .filter(|line| !line.is_empty())
+            .map(|line| {
+                serde_json::from_str(line).map_err(|e| {
+                    Error::new(ErrorDetails::ClickHouseDeserialization {
+                        message: format!("Failed to deserialize VariantCost: {e}"),
                     })
                 })
             })
@@ -1352,6 +1380,78 @@ fn build_list_functions_with_inference_count_query() -> String {
     ORDER BY last_inference_timestamp DESC
     FORMAT JSONEachRow"
         .to_string()
+}
+
+/// Build query for getting function cost by variant.
+///
+/// Joins `InferenceById` with `ModelInference` to aggregate cost data
+/// by variant and time period. Returns total cost, inference count, and
+/// the count of inferences that have cost data (for coverage).
+fn build_function_cost_by_variant_query(
+    params: &GetFunctionCostByVariantParams<'_>,
+) -> (String, HashMap<String, String>) {
+    let mut query_params = HashMap::new();
+    query_params.insert(
+        "function_name".to_string(),
+        params.function_name.to_string(),
+    );
+
+    let query = match params.time_window {
+        TimeWindow::Cumulative => r"SELECT
+                '1970-01-01T00:00:00.000Z' AS period_start,
+                i.variant_name AS variant_name,
+                sum(mi.cost) AS total_cost,
+                toUInt32(count()) AS inference_count,
+                toUInt32(countIf(mi.cost IS NOT NULL)) AS inferences_with_cost
+            FROM InferenceById i
+            INNER JOIN ModelInference mi ON mi.inference_id = uint_to_uuid(i.id_uint)
+            WHERE i.function_name = {function_name:String}
+            GROUP BY variant_name
+            ORDER BY variant_name DESC
+            FORMAT JSONEachRow"
+            .to_string(),
+        TimeWindow::Minute
+        | TimeWindow::Hour
+        | TimeWindow::Day
+        | TimeWindow::Week
+        | TimeWindow::Month => {
+            let time_window_duration = time_window_to_duration(&params.time_window);
+            let time_delta = time_window_duration * (params.max_periods + 1);
+            let time_delta_secs = time_delta.as_secs();
+            query_params.insert("time_delta_secs".to_string(), time_delta_secs.to_string());
+
+            let time_window_str = match params.time_window {
+                TimeWindow::Minute => "minute",
+                TimeWindow::Hour => "hour",
+                TimeWindow::Day => "day",
+                TimeWindow::Week => "week",
+                TimeWindow::Month => "month",
+                TimeWindow::Cumulative => "year",
+            };
+            query_params.insert("time_window".to_string(), time_window_str.to_string());
+
+            r"SELECT
+                formatDateTime(dateTrunc({time_window:String}, UUIDv7ToDateTime(uint_to_uuid(i.id_uint))), '%Y-%m-%dT%H:%i:%S.000Z') AS period_start,
+                i.variant_name AS variant_name,
+                sum(mi.cost) AS total_cost,
+                toUInt32(count()) AS inference_count,
+                toUInt32(countIf(mi.cost IS NOT NULL)) AS inferences_with_cost
+            FROM InferenceById i
+            INNER JOIN ModelInference mi ON mi.inference_id = uint_to_uuid(i.id_uint)
+            WHERE i.function_name = {function_name:String}
+            AND UUIDv7ToDateTime(uint_to_uuid(i.id_uint)) >= (
+                SELECT max(UUIDv7ToDateTime(uint_to_uuid(id_uint))) - INTERVAL {time_delta_secs:UInt64} SECOND
+                FROM InferenceById
+                WHERE function_name = {function_name:String}
+            )
+            GROUP BY period_start, variant_name
+            ORDER BY period_start DESC, variant_name DESC
+            FORMAT JSONEachRow"
+                .to_string()
+        }
+    };
+
+    (query, query_params)
 }
 
 #[cfg(test)]

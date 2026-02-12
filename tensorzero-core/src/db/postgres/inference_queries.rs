@@ -21,9 +21,9 @@ use crate::db::clickhouse::query_builder::{OrderBy, OrderByTerm, OrderDirection}
 use crate::db::inferences::{
     CountByVariant, CountInferencesForFunctionParams, CountInferencesParams,
     CountInferencesWithFeedbackParams, FunctionInferenceCount, FunctionInfo,
-    GetFunctionThroughputByVariantParams, InferenceMetadata, InferenceOutputSource,
-    InferenceQueries, ListInferenceMetadataParams, ListInferencesParams, PaginationParams,
-    VariantThroughput,
+    GetFunctionCostByVariantParams, GetFunctionThroughputByVariantParams, InferenceMetadata,
+    InferenceOutputSource, InferenceQueries, ListInferenceMetadataParams, ListInferencesParams,
+    PaginationParams, VariantCost, VariantThroughput,
 };
 use crate::db::postgres::inference_filter_helpers::{MetricJoinRegistry, apply_inference_filter};
 use crate::db::query_helpers::json_double_escape_string_without_quotes;
@@ -526,6 +526,20 @@ impl InferenceQueries for PostgresConnectionInfo {
             .collect();
 
         Ok(results)
+    }
+
+    async fn get_function_cost_by_variant(
+        &self,
+        params: GetFunctionCostByVariantParams<'_>,
+    ) -> Result<Vec<VariantCost>, Error> {
+        let pool = self.get_pool_result()?;
+        cost_by_variant_impl(
+            pool,
+            params.function_name,
+            params.time_window,
+            params.max_periods,
+        )
+        .await
     }
 }
 
@@ -1872,6 +1886,113 @@ async fn throughput_by_variant_impl(
         })
         .collect::<Result<Vec<VariantThroughput>, Error>>()?;
     Ok(variant_throughputs)
+}
+
+/// Builds and executes a cost-by-variant query.
+///
+/// Joins inference tables with `model_inferences` to aggregate cost data
+/// by variant and time period. Returns total cost, inference count, and
+/// the count of inferences that have cost data (for coverage).
+async fn cost_by_variant_impl(
+    pool: &PgPool,
+    function_name: &str,
+    time_window: TimeWindow,
+    max_periods: u32,
+) -> Result<Vec<VariantCost>, Error> {
+    let rows = if time_window == TimeWindow::Cumulative {
+        let mut qb = QueryBuilder::new(
+            r"SELECT
+                '1970-01-01T00:00:00.000Z'::text AS period_start,
+                i.variant_name,
+                COALESCE(SUM(mi.cost), 0) AS total_cost,
+                COUNT(*)::INT AS inference_count,
+                COUNT(mi.cost)::INT AS inferences_with_cost
+            FROM (
+                SELECT id, variant_name FROM tensorzero.chat_inferences WHERE function_name = ",
+        );
+        qb.push_bind(function_name);
+        qb.push(
+            " UNION ALL SELECT id, variant_name FROM tensorzero.json_inferences WHERE function_name = ",
+        );
+        qb.push_bind(function_name);
+        qb.push(
+            ") AS i
+            INNER JOIN tensorzero.model_inferences mi ON mi.inference_id = i.id
+            GROUP BY i.variant_name
+            ORDER BY i.variant_name DESC",
+        );
+
+        qb.build().fetch_all(pool).await?
+    } else {
+        let unit = time_window.to_postgres_time_unit();
+
+        let mut qb = QueryBuilder::new(
+            "WITH combined AS (
+                SELECT id, variant_name, created_at FROM tensorzero.chat_inferences WHERE function_name = ",
+        );
+        qb.push_bind(function_name);
+        qb.push(
+            " UNION ALL SELECT id, variant_name, created_at FROM tensorzero.json_inferences WHERE function_name = ",
+        );
+        qb.push_bind(function_name);
+        qb.push(
+            "),
+            max_time AS (
+                SELECT MAX(created_at) AS max_ts FROM combined
+            )
+            SELECT
+                to_char(date_trunc('",
+        );
+        qb.push(unit);
+        qb.push(
+            r#"', c.created_at), 'YYYY-MM-DD"T"HH24:MI:SS.000"Z"') AS period_start,
+                c.variant_name,
+                COALESCE(SUM(mi.cost), 0) AS total_cost,
+                COUNT(*)::INT AS inference_count,
+                COUNT(mi.cost)::INT AS inferences_with_cost
+            FROM combined c
+            INNER JOIN tensorzero.model_inferences mi ON mi.inference_id = c.id,
+            max_time m
+            WHERE c.created_at >= m.max_ts - INTERVAL '1 "#,
+        );
+        qb.push(unit);
+        qb.push("' * (");
+        qb.push_bind(max_periods as i32);
+        qb.push(" + 1) GROUP BY date_trunc('");
+        qb.push(unit);
+        qb.push("', c.created_at), c.variant_name ORDER BY period_start DESC, variant_name DESC");
+
+        qb.build().fetch_all(pool).await?
+    };
+
+    let variant_costs = rows
+        .into_iter()
+        .map(|row: PgRow| {
+            let period_start_str: String = row.get("period_start");
+            let period_start = DateTime::parse_from_rfc3339(&period_start_str)
+                .map(|dt| dt.with_timezone(&Utc))
+                .map_err(|err| {
+                    Error::new(ErrorDetails::PostgresResult {
+                        result_type: "variant_cost",
+                        message: format!(
+                            "Failed to parse `period_start` value `{period_start_str}`: {err}"
+                        ),
+                    })
+                })?;
+            let variant_name: String = row.get("variant_name");
+            let total_cost: rust_decimal::Decimal = row.get("total_cost");
+            let inference_count: i32 = row.get("inference_count");
+            let inferences_with_cost: i32 = row.get("inferences_with_cost");
+            Ok(VariantCost {
+                period_start,
+                variant_name,
+                total_cost,
+                inference_count: inference_count as u32,
+                inferences_with_cost: inferences_with_cost as u32,
+            })
+        })
+        .collect::<Result<Vec<VariantCost>, Error>>()?;
+    Ok(variant_costs)
 }
 
 #[cfg(test)]

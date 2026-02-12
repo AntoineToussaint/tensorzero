@@ -217,3 +217,136 @@ async fn test_no_cost_when_not_configured() {
         "cost should be absent when model has no cost configuration"
     );
 }
+
+// ─── Cost aggregation endpoint tests ─────────────────────────────────────────
+
+/// Verify that the cost_by_variant endpoint returns cost data after making inferences.
+#[tokio::test]
+async fn test_cost_by_variant_cumulative() {
+    // Make a non-streaming inference to ensure there's cost data
+    let response = make_inference("basic_test", false).await;
+    let inference_id = response.get("inference_id").unwrap().as_str().unwrap();
+    assert!(
+        !inference_id.is_empty(),
+        "inference should return an inference_id"
+    );
+
+    // Wait for database writes to complete
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+    // Query the cost_by_variant endpoint with cumulative time window
+    let url = get_gateway_endpoint(
+        "/internal/functions/basic_test/cost_by_variant?time_window=cumulative",
+    );
+    let response = Client::new().get(url).send().await.unwrap();
+    assert!(
+        response.status().is_success(),
+        "cost_by_variant endpoint should succeed, got status: {}",
+        response.status()
+    );
+
+    let body: Value = response.json().await.unwrap();
+    let cost_data = body.get("cost").expect("response should have `cost` field");
+    let cost_array = cost_data.as_array().expect("`cost` should be an array");
+
+    // There should be at least one entry (the variant that served the inference)
+    assert!(
+        !cost_array.is_empty(),
+        "cost_by_variant should return at least one entry after an inference"
+    );
+
+    // Verify each entry has the expected shape
+    for entry in cost_array {
+        assert!(
+            entry.get("period_start").is_some(),
+            "each cost entry should have `period_start`"
+        );
+        assert!(
+            entry.get("variant_name").is_some(),
+            "each cost entry should have `variant_name`"
+        );
+        assert!(
+            entry.get("total_cost").is_some(),
+            "each cost entry should have `total_cost`"
+        );
+        assert!(
+            entry.get("inference_count").is_some(),
+            "each cost entry should have `inference_count`"
+        );
+        assert!(
+            entry.get("inferences_with_cost").is_some(),
+            "each cost entry should have `inferences_with_cost`"
+        );
+
+        // total_cost should be > 0 since we have cost config
+        let total_cost_str = entry.get("total_cost").unwrap().as_str().unwrap();
+        let total_cost: Decimal = total_cost_str.parse().unwrap();
+        assert!(
+            total_cost > Decimal::ZERO,
+            "total_cost should be positive when cost config is present"
+        );
+
+        // inference_count should be >= inferences_with_cost
+        let inference_count = entry.get("inference_count").unwrap().as_u64().unwrap();
+        let inferences_with_cost = entry.get("inferences_with_cost").unwrap().as_u64().unwrap();
+        assert!(
+            inference_count >= inferences_with_cost,
+            "inference_count ({inference_count}) should be >= inferences_with_cost ({inferences_with_cost})"
+        );
+
+        // All inferences for basic_test have cost config, so coverage should be 100%
+        assert!(
+            inferences_with_cost > 0,
+            "inferences_with_cost should be > 0 for a model with cost config"
+        );
+    }
+}
+
+/// Verify that cost_by_variant works with time-windowed queries.
+#[tokio::test]
+async fn test_cost_by_variant_time_windowed() {
+    // Make an inference to ensure there's data
+    make_inference("basic_test", false).await;
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+    // Query with a day time window
+    let url = get_gateway_endpoint(
+        "/internal/functions/basic_test/cost_by_variant?time_window=day&max_periods=7",
+    );
+    let response = Client::new().get(url).send().await.unwrap();
+    assert!(
+        response.status().is_success(),
+        "cost_by_variant with day time window should succeed"
+    );
+
+    let body: Value = response.json().await.unwrap();
+    let cost_data = body.get("cost").expect("response should have `cost` field");
+    let cost_array = cost_data.as_array().expect("`cost` should be an array");
+
+    assert!(
+        !cost_array.is_empty(),
+        "cost_by_variant with day window should return data"
+    );
+
+    // Verify period_start is a valid RFC 3339 timestamp (not epoch)
+    for entry in cost_array {
+        let period_start = entry.get("period_start").unwrap().as_str().unwrap();
+        assert!(
+            period_start != "1970-01-01T00:00:00.000Z",
+            "time-windowed query should not return epoch timestamp"
+        );
+    }
+}
+
+/// Verify that cost_by_variant returns 404 for non-existent function.
+#[tokio::test]
+async fn test_cost_by_variant_unknown_function() {
+    let url = get_gateway_endpoint(
+        "/internal/functions/nonexistent_function_xyz/cost_by_variant?time_window=cumulative",
+    );
+    let response = Client::new().get(url).send().await.unwrap();
+    assert!(
+        !response.status().is_success(),
+        "cost_by_variant should fail for non-existent function"
+    );
+}

@@ -12,8 +12,8 @@ use crate::db::clickhouse::query_builder::InferenceFilter;
 use crate::db::delegating_connection::DelegatingDatabaseConnection;
 use crate::db::inferences::{
     CountByVariant, CountInferencesForFunctionParams, CountInferencesParams,
-    CountInferencesWithFeedbackParams, FunctionInferenceCount,
-    GetFunctionThroughputByVariantParams, InferenceQueries, VariantThroughput,
+    CountInferencesWithFeedbackParams, FunctionInferenceCount, GetFunctionCostByVariantParams,
+    GetFunctionThroughputByVariantParams, InferenceQueries, VariantCost, VariantThroughput,
 };
 use crate::endpoints::stored_inferences::v1::types::DemonstrationFeedbackFilter;
 use crate::error::{Error, ErrorDetails};
@@ -339,6 +339,70 @@ pub async fn get_function_throughput_by_variant(
         .await?;
 
     Ok(GetFunctionThroughputByVariantResponse { throughput })
+}
+
+/// Query parameters for the function cost by variant endpoint
+#[derive(Debug, Deserialize)]
+pub struct FunctionCostByVariantQueryParams {
+    /// Time granularity for grouping cost data
+    pub time_window: TimeWindow,
+    /// Maximum number of time periods to return (default: 10)
+    #[serde(default = "default_max_periods")]
+    pub max_periods: u32,
+}
+
+/// Response containing function cost data grouped by variant and time period
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
+pub struct GetFunctionCostByVariantResponse {
+    /// Cost data for each (period, variant) combination
+    pub cost: Vec<VariantCost>,
+}
+
+/// HTTP handler for the function cost by variant endpoint
+#[debug_handler(state = AppStateData)]
+#[instrument(
+    name = "get_function_cost_by_variant_handler",
+    skip_all,
+    fields(function_name = %function_name),
+)]
+pub async fn get_function_cost_by_variant_handler(
+    State(state): State<AppStateData>,
+    Path(function_name): Path<String>,
+    Query(params): Query<FunctionCostByVariantQueryParams>,
+) -> Result<Json<GetFunctionCostByVariantResponse>, Error> {
+    let database = DelegatingDatabaseConnection::new(
+        state.clickhouse_connection_info.clone(),
+        state.postgres_connection_info.clone(),
+    );
+
+    let response =
+        get_function_cost_by_variant(&state.config, &database, &function_name, params).await?;
+
+    Ok(Json(response))
+}
+
+/// Core business logic for getting function cost by variant.
+/// Validates the function exists and returns cost data grouped by variant and time period.
+pub async fn get_function_cost_by_variant(
+    config: &Config,
+    database: &(dyn InferenceQueries + Sync),
+    function_name: &str,
+    params: FunctionCostByVariantQueryParams,
+) -> Result<GetFunctionCostByVariantResponse, Error> {
+    // Validate function exists
+    config.get_function(function_name)?;
+
+    let cost = database
+        .get_function_cost_by_variant(GetFunctionCostByVariantParams {
+            function_name,
+            time_window: params.time_window,
+            max_periods: params.max_periods,
+        })
+        .await?;
+
+    Ok(GetFunctionCostByVariantResponse { cost })
 }
 
 /// HTTP handler for listing all functions with their inference counts
